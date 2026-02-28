@@ -146,12 +146,15 @@ const Footer: React.FC<FooterProps> = (props) => {
   useEffect(() => {
     const isWsRecovering =
       connectionState === "reconnecting" || connectionState === "failed";
-    const wsStateChanged =
-      lastWsReconnectStateRef.current !== connectionState;
+    const wasWsRecovering =
+      lastWsReconnectStateRef.current === "reconnecting" ||
+      lastWsReconnectStateRef.current === "failed";
+    const enteredRecovering = isWsRecovering && !wasWsRecovering;
     lastWsReconnectStateRef.current = connectionState;
 
-    // WS 进入异常/重连态时，自动带起一次 SSE 重连（避免双链路状态漂移）
-    if (!isWsRecovering || !wsStateChanged || sseRetryingRef.current) return;
+    // 仅在“首次进入异常/重连态”时自动带起一次 recordingRetry，
+    // 避免 reconnecting <-> failed 抖动期间重复请求。
+    if (!enteredRecovering || sseRetryingRef.current) return;
 
     sseRetryingRef.current = true;
     handleRequest(() => recordingRetry({ meetingId: id }), () => {}).finally(() => {

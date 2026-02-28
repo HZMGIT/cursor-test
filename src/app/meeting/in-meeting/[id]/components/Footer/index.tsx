@@ -6,7 +6,7 @@
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { WaveLoading } from "@/components/Loading";
 import Wavesurfer from "../Wavesurfer";
@@ -43,6 +43,8 @@ const Footer: React.FC<FooterProps> = (props) => {
   } = props;
   const [status, setStatus] = useState("normal");
   const [loading, setLoading] = useState(false);
+  const sseRetryingRef = useRef(false);
+  const lastWsReconnectStateRef = useRef<ConnectionState>("disconnected");
   const router = useRouter();
 
   const recordStatus = useMemo(() => {
@@ -58,6 +60,13 @@ const Footer: React.FC<FooterProps> = (props) => {
         return "other";
     }
   }, [connectionState]);
+
+  // 展示优先级：WS 状态优先于 SSE 状态
+  const mergedRecordStatus = useMemo(() => {
+    if (recordStatus === "loading" || recordStatus === "error") return recordStatus;
+    if (status === "loading" || status === "error") return status;
+    return "normal";
+  }, [recordStatus, status]);
 
   const stop = async () => {
     setLoading(true);
@@ -133,6 +142,22 @@ const Footer: React.FC<FooterProps> = (props) => {
       wsEventBus.off("disconnected", handleDisconnect);
     };
   }, []);
+
+  useEffect(() => {
+    const isWsRecovering =
+      connectionState === "reconnecting" || connectionState === "failed";
+    const wsStateChanged =
+      lastWsReconnectStateRef.current !== connectionState;
+    lastWsReconnectStateRef.current = connectionState;
+
+    // WS 进入异常/重连态时，自动带起一次 SSE 重连（避免双链路状态漂移）
+    if (!isWsRecovering || !wsStateChanged || sseRetryingRef.current) return;
+
+    sseRetryingRef.current = true;
+    handleRequest(() => recordingRetry({ meetingId: id }), () => {}).finally(() => {
+      sseRetryingRef.current = false;
+    });
+  }, [connectionState, id]);
 
   const stopBtn =
     meetingStatus === 1 ? (
@@ -239,7 +264,7 @@ const Footer: React.FC<FooterProps> = (props) => {
     <div className="pt-4 pb-4 flex-shrink-0">
       <div className="flex justify-center p-3 bg-white rounded-[12px]">
         {shouldUseRecordFooter
-          ? recordComponentMap[recordStatus]
+          ? recordComponentMap[mergedRecordStatus]
           : componentMap[status]}
       </div>
     </div>

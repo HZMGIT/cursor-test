@@ -131,16 +131,8 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
           : null;
       if (kickoffMeetingId && kickoffMeetingId === id) {
         localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
-        const wsManager = getGlobalWebSocketManager();
-        const wsState = wsManager.getConnectionState();
-        const wsMeetingId = wsManager.getMeetingId();
-        const hasLocalActiveSession =
-          wsMeetingId === id &&
-          (wsState === 'connected' || wsState === 'reconnecting');
-        if (hasLocalActiveSession) {
-          hasCheckedRef.current = true;
-          return;
-        }
+        // 即使本地看起来“已在连接/录制”，也强制走一次 startRecording 对齐 meetingId 与补连。
+        // 该分支在 isRecording=true 时不会再次触发权限弹窗。
         const result = await startRecording({ meetingId: id });
         if (result.started) {
           hasCheckedRef.current = true;
@@ -176,6 +168,17 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
       }
 
       if (isRecording) {
+        // 录制状态存在但会中页刚挂载时，meetingId/连接状态可能仍在切换。
+        // 这里统一再走一次 startRecording 对齐状态，避免“看起来在录制但 WS 不发消息”。
+        const result = await startRecording({ meetingId: id });
+        if (result.started) {
+          hasCheckedRef.current = true;
+          return;
+        }
+        if (result.retryable) {
+          scheduleRetry();
+          return;
+        }
         hasCheckedRef.current = true;
         return;
       }

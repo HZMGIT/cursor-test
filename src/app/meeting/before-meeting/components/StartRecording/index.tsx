@@ -176,33 +176,42 @@ const StartRecording: React.FC<StartRecordingProps> = (props) => {
         return false;
       };
 
-      // 会议创建成功后优先跳会中：
+      // 会议创建成功后，只有在“录制会话已就绪”时再跳会中，
+      // 避免偶发时序下进入会中后 WS 未建立发送链路。
       // - result.started=true：立即跳转
-      // - result.started=false 且可重试：先短等待会话收敛，再跳转
-      // - result.started=false 且不可重试：仍跳转，由会中页自动拉起/恢复
+      // - result.started=false：先做一次短等待 + 一次补偿启动，仍未就绪则不跳转
       if (createdMeetingId && result.started) {
         props.onCancel();
         router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
         return;
       }
 
-      // 对可重试类失败做温和兜底：等待会话状态收敛，避免线上时序误判
-      if (createdMeetingId && !result.started && result.retryable) {
-        const ready = await waitForSessionReady(createdMeetingId);
-        if (!ready) {
-          console.warn(
-            'startRecording retryable but not ready before navigation',
-            {
-              reason: result.reason,
-              meetingId: createdMeetingId,
-            }
-          );
+      if (createdMeetingId && !result.started) {
+        // 先等待会话状态收敛（覆盖“正在启动中”场景）
+        const ready = await waitForSessionReady(createdMeetingId, 2500, 250);
+        if (ready) {
+          props.onCancel();
+          router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
+          return;
         }
-      }
 
-      if (createdMeetingId) {
-        props.onCancel();
-        router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
+        // 再做一次补偿启动（避免首次因并发互斥/时序误判导致的偶发失败）
+        const reconcile = await startRecording({ meetingId: createdMeetingId });
+        if (reconcile.started || (await waitForSessionReady(createdMeetingId))) {
+          props.onCancel();
+          router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
+          return;
+        }
+
+        // 未就绪时不跳转，避免进入会中后出现“看似录制中但 WS 不发消息”
+        localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
+        if (result.reason !== 'permission-denied') {
+          toast({
+            description:
+              'Recording is still initializing. Please click Start Recording again.',
+            variant: 'warning',
+          });
+        }
         return;
       }
 

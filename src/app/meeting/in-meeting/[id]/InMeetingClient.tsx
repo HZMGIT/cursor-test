@@ -12,7 +12,9 @@ import {
   hasActiveAudioRecording,
   useAudioWebSocket,
 } from '@/hooks/useAudioWebSocket/index';
+import { webSocketMonitor } from '@/lib/websocket/webSocketMonitor';
 import { useToast } from '@/components/hooks/use-toast';
+import { recordingSession } from '@/lib/audio/recordingSession';
 import useObserver from '@/components/hooks/useObserver';
 
 interface InMeetingClientProps {
@@ -38,6 +40,15 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
   const { toast } = useToast();
   const hasCheckedRef = useRef(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigationTypeRef = useRef<string>(
+    typeof window !== 'undefined'
+      ? (
+          performance.getEntriesByType('navigation')[0] as
+            | PerformanceNavigationTiming
+            | undefined
+        )?.type ?? 'unknown'
+      : 'unknown'
+  );
   const { observer } = useObserver();
 
   const {
@@ -124,10 +135,21 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
       // 会前创建会议后跳会中的“直通恢复”：
       // 若命中一次性 meeting 标记，优先立即触发 startRecording，
       // 避免被跨页签残留状态拦截导致延迟或不发送。
-      const kickoffMeetingId =
+      let kickoffMeetingId =
         typeof window !== 'undefined'
           ? localStorage.getItem('ONGOING_RECORD_MEETING_ID')
           : null;
+
+      // 刷新会中：不走会前“直通恢复”标记，恢复原有自动拉起流程（可能触发权限）
+      if (
+        kickoffMeetingId &&
+        kickoffMeetingId === id &&
+        navigationTypeRef.current === 'reload'
+      ) {
+        localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
+        kickoffMeetingId = null;
+      }
+
       if (kickoffMeetingId && kickoffMeetingId === id) {
         const wsManager = getGlobalWebSocketManager();
         const wsState = wsManager.getConnectionState();
@@ -200,8 +222,33 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
         return;
       }
 
-      // 不再在会中页做“无上下文自动启动”（该路径会触发新的权限弹窗）。
-      // sourceType=4 且未命中会前直通恢复时，交由用户手动 Try Again。
+      // 会前页已启动（含“启动中”）或其他页面已有活跃录制时，不再重复拉起权限流程。
+      // 这里改为短时重试，避免“关闭录制页签后，脏状态尚未清理”导致本页永久不再尝试。
+      webSocketMonitor.cleanupExpiredConnections();
+      webSocketMonitor.forceCleanupLikelyStaleConnections(12000);
+      const localActive =
+        isRecording || wsState === 'connected' || wsState === 'reconnecting';
+      const blockedBySession =
+        localActive || webSocketMonitor.hasActiveConnection();
+      if (blockedBySession) {
+        scheduleRetry();
+        return;
+      }
+
+      const hasPending = recordingSession.hasPendingSession(id);
+      if (hasPending) {
+        recordingSession.clear();
+      }
+      const result = await startRecording({ meetingId: id });
+      if (result.started) {
+        hasCheckedRef.current = true;
+        return;
+      }
+      if (result.retryable) {
+        scheduleRetry();
+        return;
+      }
+      // 非可重试失败（如权限拒绝）结束自动尝试，避免循环打扰用户
       hasCheckedRef.current = true;
     };
 

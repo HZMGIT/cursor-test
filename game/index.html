@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中国象棋</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>中 国 象 棋</h1>
+    <div class="game-area">
+      <div class="board-wrapper">
+        <canvas id="chessBoard" width="660" height="730"></canvas>
+      </div>
+      <div class="info-panel">
+        <div class="status" id="status">红方先行</div>
+        <div class="captured-area">
+          <div class="captured-group">
+            <span class="captured-label red-text">红方吃子:</span>
+            <div id="redCaptured" class="captured-pieces"></div>
+          </div>
+          <div class="captured-group">
+            <span class="captured-label black-text">黑方吃子:</span>
+            <div id="blackCaptured" class="captured-pieces"></div>
+          </div>
+        </div>
+        <div class="controls">
+          <button id="newGame" class="btn btn-red">新 局</button>
+          <button id="undoMove" class="btn btn-blue">悔 棋</button>
+          <button id="toggleAI" class="btn btn-green">人机对战</button>
+        </div>
+        <div class="move-history">
+          <h3>走棋记录</h3>
+          <div id="moveList"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>

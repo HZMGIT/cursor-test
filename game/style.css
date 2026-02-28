@@ -1,0 +1,228 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  font-family: 'Microsoft YaHei', '微软雅黑', 'SimHei', 'STKaiti', sans-serif;
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.container {
+  text-align: center;
+}
+
+h1 {
+  color: #ffd700;
+  font-size: 2.6em;
+  margin-bottom: 24px;
+  text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.6);
+  letter-spacing: 0.4em;
+  font-weight: 900;
+}
+
+.game-area {
+  display: flex;
+  gap: 28px;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.board-wrapper {
+  background: linear-gradient(145deg, #b8944a, #a07830);
+  padding: 10px;
+  border-radius: 10px;
+  box-shadow:
+    0 10px 40px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  border: 3px solid #8b6914;
+}
+
+canvas {
+  display: block;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.info-panel {
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.status {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 16px 12px;
+  border-radius: 10px;
+  font-size: 1.35em;
+  font-weight: bold;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.4);
+  letter-spacing: 0.15em;
+}
+
+.captured-area {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.captured-group {
+  margin-bottom: 8px;
+}
+
+.captured-group:last-child {
+  margin-bottom: 0;
+}
+
+.captured-label {
+  font-size: 0.85em;
+  font-weight: bold;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.red-text { color: #ff6b6b; }
+.black-text { color: #b0b0b0; }
+
+.captured-pieces {
+  min-height: 28px;
+  font-size: 1.1em;
+  letter-spacing: 2px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn {
+  padding: 13px 20px;
+  font-size: 1.15em;
+  font-family: inherit;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  font-weight: bold;
+  letter-spacing: 0.2em;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.btn:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.btn-red {
+  background: linear-gradient(135deg, #e74c3c, #c0392b);
+  color: white;
+}
+
+.btn-blue {
+  background: linear-gradient(135deg, #3498db, #2980b9);
+  color: white;
+}
+
+.btn-green {
+  background: linear-gradient(135deg, #2ecc71, #27ae60);
+  color: white;
+}
+
+.btn-green.active {
+  background: linear-gradient(135deg, #e67e22, #d35400);
+}
+
+.move-history {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px;
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  text-align: left;
+}
+
+.move-history h3 {
+  color: #ffd700;
+  margin-bottom: 10px;
+  text-align: center;
+  font-size: 1.05em;
+  letter-spacing: 0.2em;
+}
+
+#moveList {
+  max-height: 260px;
+  overflow-y: auto;
+  color: #ddd;
+  font-size: 0.88em;
+  line-height: 1.9;
+}
+
+#moveList::-webkit-scrollbar {
+  width: 5px;
+}
+
+#moveList::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+}
+
+#moveList::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 3px;
+}
+
+.move-item {
+  padding: 2px 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.move-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.move-red {
+  color: #ff8a8a;
+}
+
+.move-black {
+  color: #a8a8a8;
+}
+
+@media (max-width: 960px) {
+  .game-area {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .info-panel {
+    width: 100%;
+    max-width: 400px;
+  }
+
+  h1 {
+    font-size: 2em;
+  }
+}

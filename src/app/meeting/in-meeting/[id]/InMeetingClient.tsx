@@ -9,6 +9,7 @@ import Footer from './components/Footer';
 import { rebuildRecording } from './utils';
 import {
   getGlobalWebSocketManager,
+  hasActiveAudioRecording,
   useAudioWebSocket,
 } from '@/hooks/useAudioWebSocket';
 import { webSocketMonitor } from '@/lib/websocket/webSocketMonitor';
@@ -130,18 +131,33 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
           ? localStorage.getItem('ONGOING_RECORD_MEETING_ID')
           : null;
       if (kickoffMeetingId && kickoffMeetingId === id) {
-        localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
-        // 即使本地看起来“已在连接/录制”，也强制走一次 startRecording 对齐 meetingId 与补连。
-        // 该分支在 isRecording=true 时不会再次触发权限弹窗。
-        const result = await startRecording({ meetingId: id });
-        if (result.started) {
-          hasCheckedRef.current = true;
+        const wsManager = getGlobalWebSocketManager();
+        const wsState = wsManager.getConnectionState();
+        const wsMeetingId = wsManager.getMeetingId();
+        const hasPending = recordingSession.hasPendingSession(id);
+        const hasActiveLocalSignals =
+          hasActiveAudioRecording() ||
+          hasPending ||
+          (wsMeetingId === id &&
+            (wsState === 'connected' || wsState === 'reconnecting'));
+
+        // 仅在“已有会话迹象”时做一次对齐补连，避免会中页触发新的权限弹窗。
+        if (hasActiveLocalSignals) {
+          localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
+          const result = await startRecording({ meetingId: id });
+          if (result.started) {
+            hasCheckedRef.current = true;
+            return;
+          }
+          if (result.retryable) {
+            scheduleRetry();
+            return;
+          }
           return;
         }
-        if (result.retryable) {
-          scheduleRetry();
-          return;
-        }
+
+        // 会前页可能仍在完成最后收敛，这里先等待重试，不主动触发权限流程。
+        scheduleRetry();
         return;
       }
 

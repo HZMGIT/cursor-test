@@ -125,7 +125,6 @@ sequenceDiagram
         end
     end
 
-    rect rgb(245,245,255)
     Note over UI,Hook: stopRecording（仅停止采集）
     UI->>Hook: stopRecording()
     Hook->>Audio: stopRecording()
@@ -133,9 +132,7 @@ sequenceDiagram
     Hook->>Sess: clear()
     Hook->>Cross: hardResetCrossTabRecordingState()
     Hook->>Cross: setRecentStopMark()
-    end
 
-    rect rgb(255,245,245)
     Note over UI,Hook: endSession（结束会话）
     UI->>Hook: endSession()
     Hook->>Audio: stopRecording()
@@ -145,9 +142,7 @@ sequenceDiagram
     Hook->>Sess: clear()
     Hook->>Cross: hardResetCrossTabRecordingState()
     Hook->>Cross: setRecentStopMark()
-    end
 
-    rect rgb(245,255,245)
     Note over UI,Hook: logout 兜底
     UI->>Hook: stopRecordingForLogout()
     Hook->>Hook: stopRecordingIfActive()
@@ -156,7 +151,6 @@ sequenceDiagram
     Hook->>Mon: disconnect()
     Hook->>Sess: clear()
     Hook->>Cross: hardReset... + setRecentStopMark()
-    end
 ```
 
 ### 运行期/停止链路方法注释
@@ -182,6 +176,21 @@ flowchart LR
   FLOW --> CROSS[crossTabState.ts\n跨标签锁/互斥/beforeunload]
   FLOW --> STATE[sharedState.ts\n全局启动状态]
   IDX --> TYPES[types.ts\n统一类型]
+  IDX --> GAM[lib/audio/GlobalAudioManager.ts\n权限/采集/分片发送]
+  IDX --> GWSM[lib/websocket/GlobalWebSocketManager.ts\nWS连接状态机/重连]
+  IDX --> WSMON[lib/websocket/webSocketMonitor.ts\n跨标签连接监控]
+  IDX --> RSESSION[lib/audio/recordingSession.ts\n会话持久化恢复]
+  IDX --> APKT[lib/audio/audioPacket.ts\n音频包封装]
+  FLOW --> GAM
+  FLOW --> GWSM
+  FLOW --> WSMON
+  FLOW --> RSESSION
+  SUB --> GWSM
+  SUB --> GAM
+  GUARD --> GAM
+  GUARD --> GWSM
+  GUARD --> WSMON
+  GUARD --> RSESSION
 ```
 
 ### 跨模块关键方法注释
@@ -192,3 +201,52 @@ flowchart LR
 - `cleanupPermissionStatusListener()`：移除权限状态监听，避免组件卸载后的更新。
 - `bindWebSocketSubscriptions()`：集中绑定/解绑 WebSocket 事件与状态订阅。
 - `bindAudioManagerSubscription()`：集中绑定/解绑音频状态订阅与回调触发。
+
+## 业务视角简化图
+
+```mermaid
+flowchart TD
+    A[点击 Start Recording] --> B[申请权限]
+    B --> B1{麦克风权限通过?}
+    B1 -- 否 --> B2[提示权限拒绝并结束]
+    B1 -- 是 --> C[创建会议或获取 meetingId]
+
+    C --> C1{meetingId 有效?}
+    C1 -- 否 --> C2[提示创建失败并结束]
+    C1 -- 是 --> D[建立 WebSocket 连接]
+    D --> E[启动本地录音采集]
+    E --> E1{启动成功?}
+    E1 -- 否 --> E2[提示启动失败并结束]
+    E1 -- 是 --> F[进入录制中]
+
+    F --> G[持续推送音频到 WS]
+    F --> H[持续接收 SSE 转写]
+    F --> I[更新连接状态与录制时长]
+
+    G --> G1{WS 异常?}
+    G1 -- 否 --> F
+    G1 -- 是 --> G2[自动重连 WS]
+    G2 --> G3{自动重连成功?}
+    G3 -- 是 --> F
+    G3 -- 否 --> G4[显示连接异常]
+    G4 --> G5[用户点击 Try Again]
+    G5 --> G6[先重连 WS 再重试 SSE]
+    G6 --> F
+
+    H --> H1{SSE 异常?}
+    H1 -- 否 --> F
+    H1 -- 是 --> H2[SSE 自动重试]
+    H2 --> H3{重试成功?}
+    H3 -- 是 --> F
+    H3 -- 否 --> G4
+
+    F --> J{结束触发}
+    J -- 用户点 Stop --> J1[停止录音]
+    J -- 用户点 End Session --> J2[停止录音+断开WS]
+    J -- 登出/会议结束事件 --> J3[统一清理]
+
+    J1 --> K[清理会话与跨标签状态]
+    J2 --> K
+    J3 --> K
+    K --> L[录制流程结束]
+```

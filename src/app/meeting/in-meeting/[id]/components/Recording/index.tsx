@@ -24,7 +24,7 @@ import { wsEventBus } from '../../observer';
 import useObserver from '@/components/hooks/useObserver';
 import { useToast } from '@/components/hooks/use-toast';
 import { forceReleaseLiveWaveformMedia } from '@/components/ui/live-waveform';
-import { stopRecordingIfActive } from '@/hooks/useAudioWebSocket';
+import { stopRecordingIfActive } from '@/hooks/useAudioWebSocket/index';
 
 type RecordingProps = {
   id: string;

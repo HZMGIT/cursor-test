@@ -40,7 +40,7 @@ import {
   getGlobalWebSocketManager,
   hasActiveAudioRecording,
   useAudioWebSocket,
-} from '@/hooks/useAudioWebSocket';
+} from '@/hooks/useAudioWebSocket/index';
 import { recordingSession } from '@/lib/audio/recordingSession';
 import { useRouter } from 'next/navigation';
 import { gaSend } from '@/lib/utils';
@@ -146,7 +146,6 @@ const StartRecording: React.FC<StartRecordingProps> = (props) => {
             description: form.getValues('language'),
           });
           createdMeetingId = data.meetingId;
-          localStorage.setItem('ONGOING_RECORD_MEETING_ID', data.meetingId);
           return data.meetingId;
         },
       });
@@ -181,6 +180,8 @@ const StartRecording: React.FC<StartRecordingProps> = (props) => {
       // - result.started=false 且可重试：先短等待会话收敛，再跳转
       // - result.started=false 且不可重试：仍跳转，由会中页自动拉起/恢复
       if (createdMeetingId && result.started) {
+        // 仅在录制主链路真正启动成功时，写入会中“直通恢复”标记
+        localStorage.setItem('ONGOING_RECORD_MEETING_ID', createdMeetingId);
         props.onCancel();
         router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
         return;

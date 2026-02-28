@@ -11,10 +11,8 @@ import {
   getGlobalWebSocketManager,
   hasActiveAudioRecording,
   useAudioWebSocket,
-} from '@/hooks/useAudioWebSocket';
-import { webSocketMonitor } from '@/lib/websocket/webSocketMonitor';
+} from '@/hooks/useAudioWebSocket/index';
 import { useToast } from '@/components/hooks/use-toast';
-import { recordingSession } from '@/lib/audio/recordingSession';
 import useObserver from '@/components/hooks/useObserver';
 
 interface InMeetingClientProps {
@@ -134,10 +132,8 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
         const wsManager = getGlobalWebSocketManager();
         const wsState = wsManager.getConnectionState();
         const wsMeetingId = wsManager.getMeetingId();
-        const hasPending = recordingSession.hasPendingSession(id);
         const hasActiveLocalSignals =
           hasActiveAudioRecording() ||
-          hasPending ||
           (wsMeetingId === id &&
             (wsState === 'connected' || wsState === 'reconnecting'));
 
@@ -204,33 +200,8 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
         return;
       }
 
-      // 会前页已启动（含“启动中”）或其他页面已有活跃录制时，不再重复拉起权限流程。
-      // 这里改为短时重试，避免“关闭录制页签后，脏状态尚未清理”导致本页永久不再尝试。
-      webSocketMonitor.cleanupExpiredConnections();
-      webSocketMonitor.forceCleanupLikelyStaleConnections(12000);
-      const localActive =
-        isRecording || wsState === 'connected' || wsState === 'reconnecting';
-      const blockedBySession =
-        localActive || webSocketMonitor.hasActiveConnection();
-      if (blockedBySession) {
-        scheduleRetry();
-        return;
-      }
-
-      const hasPending = recordingSession.hasPendingSession(id);
-      if (hasPending) {
-        recordingSession.clear();
-      }
-      const result = await startRecording({ meetingId: id });
-      if (result.started) {
-        hasCheckedRef.current = true;
-        return;
-      }
-      if (result.retryable) {
-        scheduleRetry();
-        return;
-      }
-      // 非可重试失败（如权限拒绝）结束自动尝试，避免循环打扰用户
+      // 不再在会中页做“无上下文自动启动”（该路径会触发新的权限弹窗）。
+      // sourceType=4 且未命中会前直通恢复时，交由用户手动 Try Again。
       hasCheckedRef.current = true;
     };
 

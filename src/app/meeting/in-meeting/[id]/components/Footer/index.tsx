@@ -61,13 +61,19 @@ const Footer: React.FC<FooterProps> = (props) => {
 
   const stop = async () => {
     setLoading(true);
-    await handleRequest(
-      () => recordingStop({ meetingId: id }),
-      async () => {
-        setLoading(false);
-        router.replace(`/meeting/after-meeting/${id}?from=1`);
-      },
-    );
+    try {
+      await handleRequest(
+        () => recordingStop({ meetingId: id }),
+        async () => {
+          setLoading(false);
+          router.replace(`/meeting/after-meeting/${id}?from=1`);
+        },
+      );
+    } catch (error) {
+      console.error("Stop failed:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const stopRecord = async () => {
@@ -90,6 +96,18 @@ const Footer: React.FC<FooterProps> = (props) => {
 
   const handleRetry = async () => {
     gaSend("in_meeting_reconnect");
+    // WebSocket 状态优先：先触发本地 WS 重连，尽快反馈连接态到 UI
+    retryConnect?.();
+    await handleRequest(
+      () => recordingRetry({ meetingId: id }),
+      () => {},
+    );
+  };
+
+  const handleReConnect = async () => {
+    gaSend("in_meeting_reconnect");
+    // WebSocket 状态优先：先触发本地 WS 重连，尽快反馈连接态到 UI
+    retryConnect?.();
     await handleRequest(() => recordingRetry({ meetingId: id }), () => {});
   };
 
@@ -200,7 +218,7 @@ const Footer: React.FC<FooterProps> = (props) => {
           <BaseIcon name="close-red" />
         </div>
         <div className="text-gray-iron-900">Sorry, Unable to Reconnect</div>
-        <Button className="font-bold" onClick={retryConnect}>
+        <Button className="font-bold" onClick={handleReConnect}>
           <BaseIcon name="refresh-cw-01" />
           Try Again
         </Button>

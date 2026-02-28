@@ -151,13 +151,8 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
       }
 
       if (kickoffMeetingId && kickoffMeetingId === id) {
-        const wsManager = getGlobalWebSocketManager();
-        const wsState = wsManager.getConnectionState();
-        const wsMeetingId = wsManager.getMeetingId();
         const hasActiveLocalSignals =
-          hasActiveAudioRecording() ||
-          (wsMeetingId === id &&
-            (wsState === 'connected' || wsState === 'reconnecting'));
+          hasActiveAudioRecording() || recordingSession.hasPendingSession(id);
 
         // 仅在“已有会话迹象”时做一次对齐补连，避免会中页触发新的权限弹窗。
         if (hasActiveLocalSignals) {

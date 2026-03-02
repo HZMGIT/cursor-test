@@ -117,9 +117,13 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    const maxKickoffRetries = 8;
-    const kickoffRetryDelayMs = 500;
     const kickoffGuardWindowMs = 5000;
+    const kickoffRetryDelayMs = 500;
+    // 重试窗口必须覆盖 kickoff guard window（并留一点调度余量），
+    // 否则会在 guard 结束前就停止重试，导致永远不触发真正启动。
+    const maxKickoffRetries = Math.ceil(
+      (kickoffGuardWindowMs + kickoffRetryDelayMs * 2) / kickoffRetryDelayMs
+    );
     const clearKickoffMarker = () => {
       if (typeof window === 'undefined') return;
       localStorage.removeItem('ONGOING_RECORD_MEETING_ID');

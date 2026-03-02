@@ -9,6 +9,37 @@ export const GLOBAL_RECORDING_LOCK_TTL_MS = 12000;
 const START_RECORDING_MUTEX_KEY = 'start_recording_mutex_v1';
 const START_RECORDING_MUTEX_TTL_MS = 10000;
 const RECENT_STOP_MARK_KEY = 'recent_recording_stop_mark_v1';
+const SUPPRESS_BEFORE_UNLOAD_UNTIL_KEY = 'suppress_before_unload_until_v1';
+
+export const suppressBeforeUnloadPromptFor = (durationMs = 1500) => {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(
+      SUPPRESS_BEFORE_UNLOAD_UNTIL_KEY,
+      String(Date.now() + Math.max(0, durationMs))
+    );
+  } catch {
+    // ignore
+  }
+};
+
+const shouldSuppressBeforeUnloadPrompt = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = sessionStorage.getItem(SUPPRESS_BEFORE_UNLOAD_UNTIL_KEY);
+    if (!raw) return false;
+    const untilTs = Number(raw);
+    if (!Number.isFinite(untilTs)) {
+      sessionStorage.removeItem(SUPPRESS_BEFORE_UNLOAD_UNTIL_KEY);
+      return false;
+    }
+    if (Date.now() <= untilTs) return true;
+    sessionStorage.removeItem(SUPPRESS_BEFORE_UNLOAD_UNTIL_KEY);
+  } catch {
+    // ignore
+  }
+  return false;
+};
 
 export const setGlobalRecordingLock = (meetingId?: string) => {
   if (typeof window === 'undefined') return;
@@ -171,6 +202,9 @@ export const installGlobalBeforeUnloadGuard = (
   if (beforeUnloadGuardInstalled || typeof window === 'undefined') return;
 
   const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+    // 应用内受控跳转（如点击返回按钮）时，跳过一次浏览器二次确认
+    if (shouldSuppressBeforeUnloadPrompt()) return;
+
     const hasOngoingSession = hasOngoingRecordingSession();
     if (!hasOngoingSession) return;
 

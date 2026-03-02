@@ -43,23 +43,45 @@ const Footer: React.FC<FooterProps> = (props) => {
   } = props;
   const [status, setStatus] = useState("normal");
   const [loading, setLoading] = useState(false);
+  const [hadActiveSession, setHadActiveSession] = useState(false);
   const sseRetryingRef = useRef(false);
   const lastWsReconnectStateRef = useRef<ConnectionState>("disconnected");
   const router = useRouter();
 
+  useEffect(() => {
+    if (
+      hasActiveRecording ||
+      connectionState === "connected" ||
+      connectionState === "reconnecting"
+    ) {
+      setHadActiveSession(true);
+    }
+  }, [hasActiveRecording, connectionState]);
+
   const recordStatus = useMemo(() => {
+    // 初次进入会中且尚未触发权限流程时：
+    // 不应展示“连接失败”，保持波形的空输入态展示。
+    if (
+      !hadActiveSession &&
+      (connectionState === "failed" || connectionState === "disconnected")
+    ) {
+      return "normal";
+    }
+
     switch (connectionState) {
       case "connected":
         return "normal";
       case "reconnecting":
         return "loading";
       case "failed":
-        return "error";
       case "disconnected":
+        return "error";
       default:
         return "other";
     }
-  }, [connectionState]);
+  }, [connectionState, hadActiveSession]);
+  const canRetryByWsState =
+    connectionState === "failed" || connectionState === "disconnected";
 
   // 展示优先级：WS 状态优先于 SSE 状态
   const mergedRecordStatus = useMemo(() => {
@@ -117,7 +139,7 @@ const Footer: React.FC<FooterProps> = (props) => {
     gaSend("in_meeting_reconnect");
     // WebSocket 状态优先：先触发本地 WS 重连，尽快反馈连接态到 UI
     retryConnect?.();
-    await handleRequest(() => recordingRetry({ meetingId: id }), () => {});
+    // await handleRequest(() => recordingRetry({ meetingId: id }), () => {});
   };
 
   const handleDisconnect = (typeCode: number) => {
@@ -156,10 +178,10 @@ const Footer: React.FC<FooterProps> = (props) => {
     // 避免 reconnecting <-> failed 抖动期间重复请求。
     if (!enteredRecovering || sseRetryingRef.current) return;
 
-    sseRetryingRef.current = true;
-    handleRequest(() => recordingRetry({ meetingId: id }), () => {}).finally(() => {
-      sseRetryingRef.current = false;
-    });
+    // sseRetryingRef.current = true;
+    // handleRequest(() => recordingRetry({ meetingId: id }), () => {}).finally(() => {
+    //   sseRetryingRef.current = false;
+    // });
   }, [connectionState, id]);
 
   const stopBtn =
@@ -198,9 +220,11 @@ const Footer: React.FC<FooterProps> = (props) => {
           <BaseIcon name="close-red" />
         </div>
         <div className="text-gray-iron-900">Sorry, Unable to Reconnect</div>
-        <Button className="font-bold" onClick={handleRetry}>
-          <BaseIcon name="refresh-cw-01" /> Try Again
-        </Button>
+        {canRetryByWsState ? (
+          <Button className="font-bold" onClick={handleRetry}>
+            <BaseIcon name="refresh-cw-01" /> Try Again
+          </Button>
+        ) : null}
         {stopBtn}
       </div>
     ),
@@ -246,10 +270,12 @@ const Footer: React.FC<FooterProps> = (props) => {
           <BaseIcon name="close-red" />
         </div>
         <div className="text-gray-iron-900">Sorry, Unable to Reconnect</div>
-        <Button className="font-bold" onClick={handleReConnect}>
-          <BaseIcon name="refresh-cw-01" />
-          Try Again
-        </Button>
+        {canRetryByWsState ? (
+          <Button className="font-bold" onClick={handleReConnect}>
+            <BaseIcon name="refresh-cw-01" />
+            Try Again
+          </Button>
+        ) : null}
         {recordStopBtn}
       </div>
     ),
@@ -261,7 +287,10 @@ const Footer: React.FC<FooterProps> = (props) => {
   if (meetingStatus !== 1) return <div className="pb-4 flex-shrink-0"></div>;
 
   const shouldUseRecordFooter =
-    sourceType === 4 && (hasActiveRecording || connectionState === "failed");
+    sourceType === 4 &&
+    (hasActiveRecording ||
+      connectionState === "failed" ||
+      connectionState === "disconnected");
 
   return (
     <div className="pt-4 pb-4 flex-shrink-0">

@@ -34,6 +34,12 @@ export interface StartRecordingOptions {
   /** 已有的会议ID（场景二） */
   meetingId?: string;
   /**
+   * 静默模式：
+   * 命中“其他标签页正在录音”时，不弹提示，仅返回 reason 供调用方处理。
+   * 主要用于页面自动恢复/自动对齐流程，避免打扰当前页用户。
+   */
+  silentOtherTabToast?: boolean;
+  /**
    * 权限获取成功后创建会议的异步回调（场景一）
    * 需返回创建成功的 meetingId
    */

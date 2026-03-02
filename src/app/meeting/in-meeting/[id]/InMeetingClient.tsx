@@ -39,7 +39,8 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
   const sourceType = meetingData?.sourceType;
   const { toast } = useToast();
   const hasCheckedRef = useRef(false);
-  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const kickoffRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const kickoffRetryAttemptsRef = useRef(0);
   const navigationTypeRef = useRef<string>(
     typeof window !== 'undefined'
       ? (
@@ -116,21 +117,49 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
 
   useEffect(() => {
     let cancelled = false;
-    let attempts = 0;
-    const maxAttempts = 45;
-    const retryDelayMs = 1000;
+    const maxKickoffRetries = 8;
+    const kickoffRetryDelayMs = 500;
+    const kickoffGuardWindowMs = 5000;
+    const clearKickoffMarker = () => {
+      if (typeof window === 'undefined') return;
+      localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
+      localStorage.removeItem('ONGOING_RECORD_MEETING_TS');
+    };
 
-    const scheduleRetry = () => {
-      attempts += 1;
-      if (attempts <= maxAttempts) {
-        retryTimerRef.current = setTimeout(() => {
-          void tryStartRecording();
-        }, retryDelayMs);
+    const scheduleKickoffRetry = () => {
+      if (cancelled || hasCheckedRef.current) return;
+      if (kickoffRetryAttemptsRef.current >= maxKickoffRetries) {
+        console.info('[kickoff-retry] reached max retries', {
+          meetingId: id,
+          attempts: kickoffRetryAttemptsRef.current,
+        });
+        clearKickoffMarker();
+        hasCheckedRef.current = true;
+        return;
       }
+      kickoffRetryAttemptsRef.current += 1;
+      console.info('[kickoff-retry] schedule retry', {
+        meetingId: id,
+        attempt: kickoffRetryAttemptsRef.current,
+        maxRetries: maxKickoffRetries,
+      });
+      if (kickoffRetryTimerRef.current) {
+        clearTimeout(kickoffRetryTimerRef.current);
+      }
+      kickoffRetryTimerRef.current = setTimeout(() => {
+        kickoffRetryTimerRef.current = null;
+        void tryStartRecording();
+      }, kickoffRetryDelayMs);
     };
 
     const tryStartRecording = async () => {
       if (cancelled || hasCheckedRef.current) return;
+      const wsManager = getGlobalWebSocketManager();
+      const wsState = wsManager.getConnectionState();
+      const wsMeetingId = wsManager.getMeetingId();
+      const isWsHealthyForCurrentMeeting =
+        wsMeetingId === id &&
+        (wsState === 'connected' || wsState === 'reconnecting');
 
       // 会前创建会议后跳会中的“直通恢复”：
       // 若命中一次性 meeting 标记，优先立即触发 startRecording，
@@ -146,37 +175,90 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
         kickoffMeetingId === id &&
         navigationTypeRef.current === 'reload'
       ) {
-        localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
+        clearKickoffMarker();
         kickoffMeetingId = null;
       }
 
       if (kickoffMeetingId && kickoffMeetingId === id) {
+        console.info('[kickoff-retry] kickoff marker hit', {
+          meetingId: id,
+          attempt: kickoffRetryAttemptsRef.current,
+        });
+        // WS 已处于健康连接，说明链路可用，不再做额外补连重试。
+        if (isWsHealthyForCurrentMeeting) {
+          console.info('[kickoff-retry] ws already healthy, finish kickoff', {
+            meetingId: id,
+          });
+          kickoffRetryAttemptsRef.current = 0;
+          clearKickoffMarker();
+          hasCheckedRef.current = true;
+          return;
+        }
+
+        const autoStartOptions = {
+          meetingId: id,
+          silentOtherTabToast: true,
+        } as const;
+        const kickoffTsRaw =
+          typeof window !== 'undefined'
+            ? localStorage.getItem('ONGOING_RECORD_MEETING_TS')
+            : null;
+        const kickoffTs = kickoffTsRaw ? Number(kickoffTsRaw) : NaN;
+        const kickoffElapsedMs = Number.isFinite(kickoffTs)
+          ? Date.now() - kickoffTs
+          : Number.POSITIVE_INFINITY;
+        const forceAlignAfterGuardWindow =
+          kickoffElapsedMs >= kickoffGuardWindowMs;
         const hasActiveLocalSignals =
           hasActiveAudioRecording() || recordingSession.hasPendingSession(id);
+        const shouldTryAlign =
+          hasActiveLocalSignals || forceAlignAfterGuardWindow;
+        console.info('[kickoff-retry] align condition', {
+          meetingId: id,
+          attempt: kickoffRetryAttemptsRef.current,
+          hasActiveLocalSignals,
+          forceAlignAfterGuardWindow,
+          kickoffElapsedMs,
+        });
 
         // 仅在“已有会话迹象”时做一次对齐补连，避免会中页触发新的权限弹窗。
-        if (hasActiveLocalSignals) {
-          localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
-          const result = await startRecording({ meetingId: id });
+        // 若超过保护窗口仍无会话迹象，也强制做一次对齐，避免稳定卡死在“永远不发消息”状态。
+        if (shouldTryAlign) {
+          const result = await startRecording(autoStartOptions);
+          console.info('[kickoff-retry] startRecording result', {
+            meetingId: id,
+            attempt: kickoffRetryAttemptsRef.current,
+            reason: result.reason,
+            started: result.started,
+            retryable: result.retryable,
+          });
           if (result.started) {
+            kickoffRetryAttemptsRef.current = 0;
+            clearKickoffMarker();
             hasCheckedRef.current = true;
             return;
           }
           if (result.retryable) {
-            scheduleRetry();
+            scheduleKickoffRetry();
             return;
           }
+          clearKickoffMarker();
+          hasCheckedRef.current = true;
           return;
         }
-
-        // 会前页可能仍在完成最后收敛，这里先等待重试，不主动触发权限流程。
-        scheduleRetry();
+        console.info('[kickoff-retry] wait for local signals', {
+          meetingId: id,
+          attempt: kickoffRetryAttemptsRef.current,
+        });
+        scheduleKickoffRetry();
         return;
       }
 
-      const wsManager = getGlobalWebSocketManager();
-      const wsState = wsManager.getConnectionState();
-      const wsMeetingId = wsManager.getMeetingId();
+      // 网络与 WS 均正常时，不触发多余重连/重试。
+      if (isWsHealthyForCurrentMeeting) {
+        hasCheckedRef.current = true;
+        return;
+      }
 
       if (
         isRecording &&
@@ -184,13 +266,16 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
         (wsState === 'disconnected' || wsState === 'failed')
       ) {
         // 录制仍在进行但 WS 断开：触发一次补连，不再等待刷新恢复
-        const result = await startRecording({ meetingId: id });
+        const result = await startRecording({
+          meetingId: id,
+          silentOtherTabToast: true,
+        });
         if (result.started) {
           hasCheckedRef.current = true;
           return;
         }
         if (result.retryable) {
-          scheduleRetry();
+          hasCheckedRef.current = true;
           return;
         }
         return;
@@ -199,13 +284,16 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
       if (isRecording) {
         // 录制状态存在但会中页刚挂载时，meetingId/连接状态可能仍在切换。
         // 这里统一再走一次 startRecording 对齐状态，避免“看起来在录制但 WS 不发消息”。
-        const result = await startRecording({ meetingId: id });
+        const result = await startRecording({
+          meetingId: id,
+          silentOtherTabToast: true,
+        });
         if (result.started) {
           hasCheckedRef.current = true;
           return;
         }
         if (result.retryable) {
-          scheduleRetry();
+          hasCheckedRef.current = true;
           return;
         }
         hasCheckedRef.current = true;
@@ -218,29 +306,26 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
       }
 
       // 会前页已启动（含“启动中”）或其他页面已有活跃录制时，不再重复拉起权限流程。
-      // 这里改为短时重试，避免“关闭录制页签后，脏状态尚未清理”导致本页永久不再尝试。
+      // 这里仅做轻量清理，不做前置拦截；
+      // 是否应拦截由 startRecording 内部统一判定（含更完整的跨标签清理/互斥逻辑），
+      // 避免线上因 monitor 脏状态被动重试 10+ 次才真正发起连接。
       webSocketMonitor.cleanupExpiredConnections();
       webSocketMonitor.forceCleanupLikelyStaleConnections(12000);
-      const localActive =
-        isRecording || wsState === 'connected' || wsState === 'reconnecting';
-      const blockedBySession =
-        localActive || webSocketMonitor.hasActiveConnection();
-      if (blockedBySession) {
-        scheduleRetry();
-        return;
-      }
 
       const hasPending = recordingSession.hasPendingSession(id);
       if (hasPending) {
         recordingSession.clear();
       }
-      const result = await startRecording({ meetingId: id });
+      const result = await startRecording({
+        meetingId: id,
+        silentOtherTabToast: true,
+      });
       if (result.started) {
         hasCheckedRef.current = true;
         return;
       }
       if (result.retryable) {
-        scheduleRetry();
+        hasCheckedRef.current = true;
         return;
       }
       // 非可重试失败（如权限拒绝）结束自动尝试，避免循环打扰用户
@@ -251,9 +336,9 @@ const InMeetingClient: React.FC<InMeetingClientProps> = ({
 
     return () => {
       cancelled = true;
-      if (retryTimerRef.current) {
-        clearTimeout(retryTimerRef.current);
-        retryTimerRef.current = null;
+      if (kickoffRetryTimerRef.current) {
+        clearTimeout(kickoffRetryTimerRef.current);
+        kickoffRetryTimerRef.current = null;
       }
     };
   }, [id, isRecording, sourceType, startRecording]);

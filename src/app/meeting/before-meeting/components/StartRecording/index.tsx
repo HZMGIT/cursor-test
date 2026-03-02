@@ -36,12 +36,7 @@ import {
 } from '@/components/ui/select';
 import { createBrowser } from '@/api/record';
 import { useToast } from '@/components/hooks/use-toast';
-import {
-  getGlobalWebSocketManager,
-  hasActiveAudioRecording,
-  useAudioWebSocket,
-} from '@/hooks/useAudioWebSocket/index';
-import { recordingSession } from '@/lib/audio/recordingSession';
+import { useAudioWebSocket } from '@/hooks/useAudioWebSocket/index';
 import { useRouter } from 'next/navigation';
 import { gaSend } from '@/lib/utils';
 import NotifyPopup from '@/components/NotifyPopup';
@@ -147,39 +142,16 @@ const StartRecording: React.FC<StartRecordingProps> = (props) => {
           });
           createdMeetingId = data.meetingId;
           localStorage.setItem('ONGOING_RECORD_MEETING_ID', data.meetingId);
+          localStorage.setItem(
+            'ONGOING_RECORD_MEETING_TS',
+            String(Date.now())
+          );
           return data.meetingId;
         },
       });
 
-      const isMeetingSessionReady = (meetingId: string) => {
-        const wsManager = getGlobalWebSocketManager();
-        const state = wsManager.getConnectionState();
-        const wsMeetingId = wsManager.getMeetingId();
-        return (
-          recordingSession.hasPendingSession(meetingId) ||
-          (hasActiveAudioRecording() &&
-            wsMeetingId === meetingId &&
-            (state === 'connected' || state === 'reconnecting'))
-        );
-      };
-
-      const waitForSessionReady = async (
-        meetingId: string,
-        timeoutMs = 1200,
-        intervalMs = 250
-      ) => {
-        const maxLoops = Math.ceil(timeoutMs / intervalMs);
-        for (let i = 0; i < maxLoops; i++) {
-          if (isMeetingSessionReady(meetingId)) return true;
-          await new Promise((resolve) => setTimeout(resolve, intervalMs));
-        }
-        return false;
-      };
-
-      // 会议创建成功后，只有在“录制会话已就绪”时再跳会中，
-      // 避免偶发时序下进入会中后 WS 未建立发送链路。
-      // - result.started=true：立即跳转
-      // - result.started=false：先做一次短等待 + 一次补偿启动，仍未就绪则不跳转
+      // 会议创建成功后优先保证可进入会中页，避免会前页因状态收敛卡住。
+      // 会中页会基于 ONGOING_RECORD_MEETING_ID 做直通对齐与重试。
       if (createdMeetingId && result.started) {
         props.onCancel();
         router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
@@ -187,31 +159,9 @@ const StartRecording: React.FC<StartRecordingProps> = (props) => {
       }
 
       if (createdMeetingId && !result.started) {
-        // 先等待会话状态收敛（覆盖“正在启动中”场景）
-        const ready = await waitForSessionReady(createdMeetingId, 2500, 250);
-        if (ready) {
-          props.onCancel();
-          router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
-          return;
-        }
-
-        // 再做一次补偿启动（避免首次因并发互斥/时序误判导致的偶发失败）
-        const reconcile = await startRecording({ meetingId: createdMeetingId });
-        if (reconcile.started || (await waitForSessionReady(createdMeetingId))) {
-          props.onCancel();
-          router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
-          return;
-        }
-
-        // 未就绪时不跳转，避免进入会中后出现“看似录制中但 WS 不发消息”
-        localStorage.removeItem('ONGOING_RECORD_MEETING_ID');
-        if (result.reason !== 'permission-denied') {
-          toast({
-            description:
-              'Recording is still initializing. Please click Start Recording again.',
-            variant: 'warning',
-          });
-        }
+        // 会议已创建则先跳会中，后续由会中页自动对齐录制链路。
+        props.onCancel();
+        router.push(`/meeting/in-meeting/${createdMeetingId}?type=record`);
         return;
       }
 

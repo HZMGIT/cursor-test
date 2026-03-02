@@ -23,6 +23,21 @@ export const hasOngoingRecordingSession = (): boolean => {
   );
 };
 
+/**
+ * 仅用于 beforeunload 守卫的“当前标签页”判定：
+ * - 不依赖 localStorage 全局锁，避免复制标签页时误弹二次提示。
+ * - 保留本标签页真实录制/连接中的保护能力。
+ */
+export const hasOngoingRecordingSessionInThisTab = (): boolean => {
+  const state = globalWebSocketManager.getConnectionState();
+  return (
+    globalAudioManager.isRecordingActive() ||
+    state === 'connected' ||
+    state === 'reconnecting' ||
+    isGlobalStartInProgress()
+  );
+};
+
 export const stopRecordingIfActive = (): { hadActiveSession: boolean } => {
   // hasOngoingRecordingSession 不包含 webSocketMonitor 残留态。
   // 为避免“会议结束后 monitor 仍残留导致下次误判其他标签页在录音”，

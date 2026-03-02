@@ -41,9 +41,14 @@ const Recording: React.FC<RecordingProps> = (props) => {
   const router = useRouter();
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const heartbeatTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastMessageTimeRef = useRef<number>(Date.now());
+  const hasReceivedSseMessageRef = useRef(false);
+  const isReconnectingRef = useRef(false);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 10;
+  const firstMessageGraceMs = 20000;
+  const heartbeatTimeoutMs = 15000;
   const abortCtrlRef = useRef<AbortController | null>(null);
   const { observer } = useObserver();
   const { toast } = useToast();
@@ -129,9 +134,12 @@ const Recording: React.FC<RecordingProps> = (props) => {
     heartbeatTimerRef.current = setInterval(() => {
       const now = Date.now();
       const timeSinceLastMessage = now - lastMessageTimeRef.current;
-      if (timeSinceLastMessage > 5000) {
+      const timeoutMs = hasReceivedSseMessageRef.current
+        ? heartbeatTimeoutMs
+        : firstMessageGraceMs;
+      if (timeSinceLastMessage > timeoutMs) {
         console.log('未检测到心跳事件，准备重新连接');
-        reconnect();
+        reconnect('heartbeat-timeout');
       }
     }, 1000);
   };
@@ -143,6 +151,8 @@ const Recording: React.FC<RecordingProps> = (props) => {
 
   const startSSE = () => {
     if (status !== 1) return;
+    hasReceivedSseMessageRef.current = false;
+    lastMessageTimeRef.current = Date.now();
     const timestamp = transcriptsList?.at(-1)?.turnStartTime || 0;
     const abortCtrl = createAbortController();
     sseFetch({
@@ -154,33 +164,44 @@ const Recording: React.FC<RecordingProps> = (props) => {
       },
       onMessage: (res) => {
         if (res === 'heartbeat') {
+          hasReceivedSseMessageRef.current = true;
           lastMessageTimeRef.current = Date.now();
+          reconnectAttemptsRef.current = 0;
         } else {
+          hasReceivedSseMessageRef.current = true;
+          lastMessageTimeRef.current = Date.now();
+          reconnectAttemptsRef.current = 0;
           const sseData = parseChatInsightData(res);
           if (sseData) handleMessage(sseData.type, sseData.data);
         }
       },
       onClose: () => {
         console.log('SSE onClose');
-        reconnect();
+        reconnect('sse-close');
       },
       onError: () => {
-        reconnect();
+        reconnect('sse-error');
       },
     });
   };
 
-  const reconnect = () => {
+  const reconnect = (reason: 'heartbeat-timeout' | 'sse-close' | 'sse-error') => {
+    if (isReconnectingRef.current) return;
     if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
       console.log('达到最大重连次数，停止重连');
       return cleanupSSE();
     }
 
+    isReconnectingRef.current = true;
     reconnectAttemptsRef.current++;
-    console.log(`尝试重连，第${reconnectAttemptsRef.current}次`);
+    console.log(
+      `尝试重连，第${reconnectAttemptsRef.current}次，原因：${reason}`
+    );
 
     cleanupSSE();
-    setTimeout(() => {
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      isReconnectingRef.current = false;
       startSSE();
     }, 2000 * reconnectAttemptsRef.current);
   };
@@ -194,6 +215,10 @@ const Recording: React.FC<RecordingProps> = (props) => {
     if (heartbeatTimerRef.current) {
       clearInterval(heartbeatTimerRef.current);
       heartbeatTimerRef.current = null;
+    }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
     }
   };
 

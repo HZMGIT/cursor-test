@@ -28,7 +28,11 @@ import {
   setGlobalRecordingLock,
   setRecentStopMark,
 } from './crossTabState';
-import { hasOngoingRecordingSession, stopRecordingIfActive } from './sessionGuards';
+import {
+  hasOngoingRecordingSession,
+  hasOngoingRecordingSessionInThisTab,
+  stopRecordingIfActive,
+} from './sessionGuards';
 import { executeStartRecording } from './recordingFlow';
 import type {
   AudioWebSocketCallbacks,
@@ -134,6 +138,15 @@ export function useAudioWebSocket(
   const meetingIdRef = useRef<string>(
     globalWebSocketManager.getMeetingId() ?? ''
   );
+  const audioSendDebugRef = useRef<{
+    lastDropLogAt: number;
+    lastDropReason: string;
+    firstSentMeetingId: string;
+  }>({
+    lastDropLogAt: 0,
+    lastDropReason: '',
+    firstSentMeetingId: '',
+  });
   const isMountedRef = useRef(true);
   const lastRecordingStateRef = useRef(isRecording);
 
@@ -174,9 +187,27 @@ export function useAudioWebSocket(
       audioData: Float32Array,
       type: 'microphone' | 'screenShare' | 'mixed'
     ) => {
+      const meetingId = globalWebSocketManager.getMeetingId() ?? '';
+      const wsState = globalWebSocketManager.getConnectionState();
       // 双重守卫：isConnected() 现在同时检查 _connectionState === 'connected'
       // 和 readyState === OPEN，确保网络断开后不再尝试发送
-      if (!globalWebSocketManager.isConnected()) return;
+      if (!globalWebSocketManager.isConnected()) {
+        const now = Date.now();
+        const reason = `not-connected:${wsState}`;
+        if (
+          now - audioSendDebugRef.current.lastDropLogAt > 3000 ||
+          audioSendDebugRef.current.lastDropReason !== reason
+        ) {
+          audioSendDebugRef.current.lastDropLogAt = now;
+          audioSendDebugRef.current.lastDropReason = reason;
+          console.info('[audio-send] drop before send', {
+            meetingId,
+            wsState,
+            packetType: type,
+          });
+        }
+        return;
+      }
 
       try {
         let headerType = 0;
@@ -197,9 +228,31 @@ export function useAudioWebSocket(
         const sent = globalWebSocketManager.send(audioPacket.buffer as ArrayBuffer);
 
         if (sent) {
+          if (audioSendDebugRef.current.firstSentMeetingId !== meetingId) {
+            audioSendDebugRef.current.firstSentMeetingId = meetingId;
+            console.info('[audio-send] first packet sent', {
+              meetingId,
+              packetType: type,
+            });
+          }
           webSocketMonitor.updateActiveTime(
             globalWebSocketManager.getMeetingId() ?? undefined
           );
+        } else {
+          const now = Date.now();
+          const reason = `send-return-false:${wsState}`;
+          if (
+            now - audioSendDebugRef.current.lastDropLogAt > 3000 ||
+            audioSendDebugRef.current.lastDropReason !== reason
+          ) {
+            audioSendDebugRef.current.lastDropLogAt = now;
+            audioSendDebugRef.current.lastDropReason = reason;
+            console.warn('[audio-send] send returned false', {
+              meetingId,
+              wsState,
+              packetType: type,
+            });
+          }
         }
       } catch (error) {
         console.error(`Failed to send ${type} audio data:`, error);
@@ -214,9 +267,11 @@ export function useAudioWebSocket(
     (meetingId: string) => {
       if (!meetingId) return;
       const previousMeetingId = meetingIdRef.current;
+      const managerMeetingId = globalWebSocketManager.getMeetingId();
+      const isWsConnected = globalWebSocketManager.isConnected();
 
       if (
-        globalWebSocketManager.isConnected() &&
+        isWsConnected &&
         previousMeetingId === meetingId
       ) {
         console.log('Already connected to this meeting');
@@ -224,10 +279,25 @@ export function useAudioWebSocket(
       }
 
       if (
-        globalWebSocketManager.isConnected() &&
+        isWsConnected &&
         previousMeetingId &&
         previousMeetingId !== meetingId
       ) {
+        globalWebSocketManager.disconnect();
+      }
+
+      // 兜底：当本地 ref 未及时对齐但全局管理器仍连在其他 meeting 时，
+      // 强制切换连接，避免“看起来已发送但发到了旧会议连接”。
+      if (
+        isWsConnected &&
+        managerMeetingId &&
+        managerMeetingId !== meetingId
+      ) {
+        console.warn('Detected websocket bound to different meeting, reconnecting', {
+          fromMeetingId: managerMeetingId,
+          toMeetingId: meetingId,
+          refMeetingId: previousMeetingId,
+        });
         globalWebSocketManager.disconnect();
       }
 
@@ -239,6 +309,10 @@ export function useAudioWebSocket(
 
       if (!globalWebSocketManager.isConnected()) {
         globalWebSocketManager.connect(url);
+      } else {
+        console.info('WebSocket already connected after meeting alignment', {
+          meetingId,
+        });
       }
     },
     [getWebSocketUrl]
@@ -439,7 +513,7 @@ export function useAudioWebSocket(
   useEffect(() => {
     isMountedRef.current = true;
     // 全局单次注册：跨路由持续生效，不随某个页面组件卸载而丢失
-    installGlobalBeforeUnloadGuard(hasOngoingRecordingSession);
+    installGlobalBeforeUnloadGuard(hasOngoingRecordingSessionInThisTab);
 
     return () => {
       isMountedRef.current = false;
